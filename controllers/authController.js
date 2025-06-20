@@ -1,120 +1,66 @@
-// Handles user authentication logic:
-// Registration hash the password, save user
-// Login which verify password, return JWT token with role info
-
 import User from '../models/User.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
+const generateToken = (res, userId) => {
+  const token = jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+    expiresIn: '1d',
+  });
 
-//User Regeristration // usuing the post request
-export const registerUser = async (req, res) => {
-    const { name, email, password, role } = req.body;
-
-    try {
-        const existingUser = await User.findOne({ email });
-        if (existingUser) {
-            console.log(`Registration failed for "${email}" - User already exists.`);
-            return res.status(400).json({
-                success: false,
-                message: 'User with this email already exists. Try logging in.',
-                email
-            });
-        }
-
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-
-        const user = await User.create({
-            name,
-            email,
-            password: hashedPassword,
-            role: role || 'user',
-        });
-
-        console.log(`New user registered:
-            Name: ${name}
-            Email: ${email}
-            Role: ${user.role}`);
-
-        res.status(201).json({
-            success: true,
-            message: 'Registration successful!',
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                role: user.role
-            }
-        });
-    } catch (error) {
-        console.error(`Error during registration for "${email}":`, error.message);
-        res.status(500).json({
-            success: false,
-            message: 'An internal server error occurred during registration.'
-        });
-    }
+  res.cookie('token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 24 * 60 * 60 * 1000,
+  });
 };
 
-//Login the user and return JWT token
+// REGISTER
+export const registerUser = async (req, res) => {
+  const { name, email, password, role } = req.body;
+  try {
+    const userExists = await User.findOne({ email });
+    if (userExists) return res.status(400).json({ message: 'User already exists' });
 
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await User.create({ name, email, password: hashed, role });
+
+    generateToken(res, user._id);
+
+    res.status(201).json({
+      message: 'Registration successful',
+      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+    });
+  } catch (error) {
+    console.error('Register error:', error.message);
+    res.status(500).json({ message: 'Server error during registration' });
+  }
+};
+
+// LOGIN
 export const loginUser = async (req, res) => {
-    const { email, password, role } = req.body;
+  const { email, password } = req.body;
 
-    try {
-        const user = await User.findOne({ email });
+  try {
+    const user = await User.findOne({ email });
+    if (!user) return res.status(400).json({ message: 'User not found' });
 
-        if (!user) {
-            console.log(`Login failed - No user found with email "${email}"`);
-            return res.status(400).json({
-                success: false,
-                message: 'No account found with that email address.',
-                email
-            });
-        }
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) return res.status(400).json({ message: 'Incorrect password' });
 
-        if (role !== user.role) {
-            console.log(`Login failed - Role mismatch for "${email}". Tried: "${role}", Actual: "${user.role}"`);
-            return res.status(400).json({
-                success: false,
-                message: `Role mismatch. This account is registered as a "${user.role}".`,
-            });
-        }
+    generateToken(res, user._id);
 
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-            console.log(`Login failed - Incorrect password for "${email}"`);
-            return res.status(400).json({
-                success: false,
-                message: 'Incorrect password. Please try again.',
-            });
-        }
+    res.json({
+      message: 'Login successful',
+      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+    });
+  } catch (error) {
+    console.error('Login error:', error.message);
+    res.status(500).json({ message: 'Server error during login' });
+  }
+};
 
-        const payload = { id: user._id, role: user.role };
-        const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
-
-        console.log(`Login successful:
-            Email: ${email}
-            Role: ${user.role}
-            Token expires in: 1 hour`
-        );
-
-        res.status(200).json({
-            success: true,
-            message: 'Login successful!',
-            token,
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                role: user.role,
-            }
-        });
-    } catch (error) {
-        console.error(`Error during login for "${email}":`, error.message);
-        res.status(500).json({
-            success: false,
-            message: 'An internal server error occurred during login.'
-        });
-    }
+// LOGOUT
+export const logoutUser = (req, res) => {
+  res.clearCookie('token').json({ message: 'Logged out' });
 };
