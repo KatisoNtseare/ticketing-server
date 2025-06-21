@@ -5,7 +5,6 @@ import {
   updateTicket,
   deleteTicket,
 } from '../controllers/ticketController.js';
-
 import { protect, adminOnly } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
